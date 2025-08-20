@@ -354,48 +354,41 @@ def list_vocab(
 # =========================
 @app.get("/jotoba", response_model=PagedResponse)
 def list_jotoba(
-    level: Optional[str] = Query(None, description="Nivel N5..N1"),
-    q: Optional[str] = Query(None, description="Búsqueda en term / readings / glosses"),
+    level_code: Optional[str] = Query(None, alias="level"),
+    q: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    TABLE = "jotoba_entries"
+    """
+    Busca en la VISTA jotoba_search (term, readings_text, glosses_text).
+    - level_code: N5..N1 (alias 'level' para compatibilidad: /jotoba?level=N5)
+    - q: kanji/kana o texto (es/en) de glosas
+    """
+    view = supabase().table("jotoba_search")
 
-    tbl = supabase().table(TABLE)
-    qry = tbl.select("*")
+    qry = view.select("*")
+    if level_code:
+        qry = qry.eq("level_code", level_code)
 
-    # Filtros
-    if level:
-        qry = qry.eq("level", level)
-
-    # ¡Importante! readings/glosses/raw son JSONB y pueden ser arrays.
-    # Para evitar 500, casteamos a texto y usamos ilike.
-    cond = None
     if q:
         like = f"%{q}%"
-        cond = ",".join([
-            f"term.ilike.{like}",
-            f"readings::text.ilike.{like}",
-            f"glosses::text.ilike.{like}",
-            f"raw::text.ilike.{like}",
-        ])
-        qry = qry.or_(cond)
+        # Busca en término, readings (kana concatenado) y glosas (texto concatenado)
+        qry = qry.or_(f"term.ilike.{like},readings_text.ilike.{like},glosses_text.ilike.{like}")
 
-    # Conteo exacto con los mismos filtros
-    count_q = supabase().table(TABLE).select("id", count="exact")
-    if level:
-        count_q = count_q.eq("level", level)
-    if cond:
-        count_q = count_q.or_(cond)
+    # Conteo exacto para la misma query
+    cnt = supabase().table("jotoba_search").select("uuid", count="exact")
+    if level_code:
+        cnt = cnt.eq("level_code", level_code)
+    if q:
+        like = f"%{q}%"
+        cnt = cnt.or_(f"term.ilike.{like},readings_text.ilike.{like},glosses_text.ilike.{like}")
 
-    total = count_q.execute().count or 0
-
+    total = cnt.execute().count or 0
     data = (
-        qry.order("level")
+        qry.order("level_code")
            .range(offset, offset + limit - 1)
            .execute()
            .data
         or []
     )
-
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
