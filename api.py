@@ -221,6 +221,13 @@ def search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=10
     return {"query": q, "points": gp, "examples": ex}
 
 # --- Arranque local / Render ---
+@app.get("/__debug/env", include_in_schema=False)
+def debug_env():
+    return {
+        "POINTS_TABLE": POINTS_TABLE,
+        "EXAMPLES_TABLE": EXAMPLES_TABLE
+    }
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8001))
