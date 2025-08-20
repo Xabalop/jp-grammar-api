@@ -290,3 +290,119 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8001))
     uvicorn.run("api:app", host="0.0.0.0", port=port, reload=False)
+# =========================
+# MODELOS NUEVOS
+# =========================
+class VocabItem(BaseModel):
+    id: str
+    level: Optional[str] = None       # en tu tabla 'vocab' se llama 'level'
+    kanji: Optional[str] = None
+    reading_kana: Optional[str] = None
+    meaning: Optional[str] = None
+
+class JotobaEntry(BaseModel):
+    id: str
+    term: str
+    level: Optional[str] = None
+    language: Optional[str] = None
+    readings: Optional[dict] = None   # jsonb; lo devolvemos como dict
+
+
+# =========================
+# /vocab  (lista con filtros + paginación)
+# =========================
+@app.get("/vocab", response_model=PagedResponse)
+def list_vocab(
+    level: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    table_name = "vocab"
+    tbl = supabase().table(table_name)
+    qry = tbl.select("*")
+
+    if level:
+        qry = qry.eq("level", level)
+
+    if q:
+        like = f"%{q}%"
+        # columnas típicas en tu captura: kanji, meaning, reading_kana
+        qry = qry.or_(f"kanji.ilike.{like},meaning.ilike.{like},reading_kana.ilike.{like}")
+
+    # conteo exacto aplicando los mismos filtros
+    count_q = supabase().table(table_name).select("*", count="exact")
+    if level:
+        count_q = count_q.eq("level", level)
+    if q:
+        like = f"%{q}%"
+        count_q = count_q.or_(f"kanji.ilike.{like},meaning.ilike.{like},reading_kana.ilike.{like}")
+    total = count_q.execute().count or 0
+
+    data = (
+        qry.order("level")
+           .range(offset, offset + limit - 1)
+           .execute()
+           .data
+        or []
+    )
+    return PagedResponse(items=data, total=total, limit=limit, offset=offset)
+
+
+# =========================
+# /jotoba  (lista con filtros + paginación)
+# =========================
+@app.get("/jotoba", response_model=PagedResponse)
+def list_jotoba(
+    level: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),     # busca por 'term' y, si se puede, dentro de 'readings'
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    table_name = "jotoba_entries"
+    tbl = supabase().table(table_name)
+    qry = tbl.select("*")
+
+    if level:
+        qry = qry.eq("level", level)
+    if language:
+        qry = qry.eq("language", language)
+
+    # Búsqueda básica por 'term' y, si la API lo permite, por readings::text
+    if q:
+        like = f"%{q}%"
+        # intentamos incluir readings::text; si falla, nos quedamos con 'term'
+        try:
+            qry = qry.or_(f"term.ilike.{like},readings::text.ilike.{like}")
+            use_readings = True
+        except Exception:
+            qry = qry.ilike("term", like)
+            use_readings = False
+
+    # Conteo con mismos filtros
+    count_q = supabase().table(table_name).select("*", count="exact")
+    if level:
+        count_q = count_q.eq("level", level)
+    if language:
+        count_q = count_q.eq("language", language)
+    if q:
+        like = f"%{q}%"
+        try:
+            if use_readings:
+                count_q = count_q.or_(f"term.ilike.{like},readings::text.ilike.{like}")
+            else:
+                count_q = count_q.ilike("term", like)
+        except Exception:
+            count_q = count_q.ilike("term", like)
+
+    total = count_q.execute().count or 0
+
+    data = (
+        qry.order("level")
+           .range(offset, offset + limit - 1)
+           .execute()
+           .data
+        or []
+    )
+    return PagedResponse(items=data, total=total, limit=limit, offset=offset)
