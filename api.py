@@ -8,18 +8,18 @@ from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
 
-# --- Carga .env ---
+# --- Carga variables de entorno ---
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE")  # usa la SERVICE ROLE (bypassa RLS)
 POINTS_TABLE = os.getenv("POINTS_TABLE", "grammar_points")
-EXAMPLES_TABLE = os.getenv("EXAMPLES_TABLE", "grammar_examples")  # cámbialo si tu tabla se llama diferente
+EXAMPLES_TABLE = os.getenv("EXAMPLES_TABLE", "examples")  # por defecto 'examples' (tu tabla)
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE en el entorno (.env).")
 
-# --- Cliente Supabase singleton ---
+# --- Cliente Supabase (singleton) ---
 _supabase: Optional[Client] = None
 def supabase() -> Client:
     global _supabase
@@ -27,7 +27,7 @@ def supabase() -> Client:
         _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _supabase
 
-# --- Modelos de respuesta ---
+# --- Modelos ---
 class GrammarPoint(BaseModel):
     id: str
     level_code: str
@@ -42,12 +42,15 @@ class GrammarPoint(BaseModel):
 
 class Example(BaseModel):
     id: Optional[str] = None
-    level_code: Optional[str] = None
+    grammar_id: Optional[str] = None
+    level_code: Optional[str] = None  # por si existe
     title: Optional[str] = None
     pattern: Optional[str] = None
     jp: str
+    romaji: Optional[str] = None
     es: Optional[str] = None
     en: Optional[str] = None
+    hint: Optional[str] = None
 
 class GrammarPointWithExamples(BaseModel):
     point: GrammarPoint
@@ -59,16 +62,23 @@ class PagedResponse(BaseModel):
     limit: int
     offset: int
 
+# --- App ---
 app = FastAPI(title="JP Grammar API", version="1.0.0")
 
-# CORS (ajusta origins en producción)
+# CORS (ajusta origins si quieres restringirlos)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Endpoints básicos ---
+@app.get("/")
+def root():
+    # Redirige a la documentación
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 def health():
@@ -76,22 +86,22 @@ def health():
 
 @app.get("/levels", response_model=List[Dict[str, str]])
 def get_levels():
+    # Si tienes sort_order en levels, se ordena por ahí; si no, por code
+    try:
+        r = supabase().table("levels").select("code,sort_order").order("sort_order").execute()
+        rows = r.data or []
+        if rows and "sort_order" in rows[0]:
+            return [{"code": row["code"]} for row in rows]
+    except Exception:
+        pass
     r = supabase().table("levels").select("code").order("code").execute()
     return r.data or []
 
-# ---------- Helpers ----------
-def _apply_or(qry, cols: List[str], like: str):
-    """Aplica un filtro OR 'col.ilike.like' para un set de columnas."""
-    if not cols:
-        return qry
-    expr = ",".join([f"{c}.ilike.{like}" for c in cols])
-    return qry.or_(expr)
-
-# ---------- Endpoints ----------
+# --- Grammar (lista) ---
 @app.get("/grammar", response_model=PagedResponse)
 def list_grammar(
-    level_code: Optional[str] = Query(None, description="Filtra por nivel: N5..N1"),
-    q: Optional[str] = Query(None, description="Búsqueda en title/pattern/meaning"),
+    level_code: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -100,12 +110,11 @@ def list_grammar(
 
     if level_code:
         qry = qry.eq("level_code", level_code)
-
     if q:
         like = f"%{q}%"
         qry = qry.or_(f"title.ilike.{like},pattern.ilike.{like},meaning_es.ilike.{like},meaning_en.ilike.{like}")
 
-    # conteo robusto (no depende de 'id')
+    # Conteo robusto (no dependemos de columnas concretas)
     count_q = supabase().table(POINTS_TABLE).select("*", count="exact")
     if level_code:
         count_q = count_q.eq("level_code", level_code)
@@ -114,9 +123,11 @@ def list_grammar(
         count_q = count_q.or_(f"title.ilike.{like},pattern.ilike.{like},meaning_es.ilike.{like},meaning_en.ilike.{like}")
     total = count_q.execute().count or 0
 
+    # Orden seguro
     data = qry.order("level_code").order("title").range(offset, offset + limit - 1).execute().data or []
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
 
+# --- Grammar (detalle + ejemplos relacionados) ---
 @app.get("/grammar/{point_id}", response_model=GrammarPointWithExamples)
 def get_grammar_point(point_id: str):
     r = supabase().table(POINTS_TABLE).select("*").eq("id", point_id).single().execute()
@@ -124,108 +135,106 @@ def get_grammar_point(point_id: str):
         raise HTTPException(status_code=404, detail="Punto gramatical no encontrado")
     point = GrammarPoint(**r.data)
 
-    base = supabase().table(EXAMPLES_TABLE).select("*")
-    # intentamos filtrar por pattern/title si existen; si falla, caemos a level_code
-    applied = False
-    like_pat = f"%{point.pattern}%" if point.pattern else None
-    like_title = f"%{point.title}%" if point.title else None
+    # Estrategia de relación:
+    # 1) Si hay grammar_id en examples, úsalo.
+    # 2) Si no, intenta por pattern o title.
+    # 3) Si tampoco, cae por level_code (si existe esa columna en examples).
+    ex_q = supabase().table(EXAMPLES_TABLE).select("*")
 
     try:
-        if like_pat:
-            base = base.ilike("pattern", like_pat)
-            applied = True
+        ex = ex_q.eq("grammar_id", point_id).limit(100).execute().data or []
     except Exception:
-        pass
+        ex = []
 
-    try:
-        if like_title:
-            base = base.ilike("title", like_title)
-            applied = True
-    except Exception:
-        pass
+    if not ex and point.pattern:
+        try:
+            ex = supabase().table(EXAMPLES_TABLE).select("*").ilike("pattern", f"%{point.pattern}%").limit(100).execute().data or []
+        except Exception:
+            pass
 
-    if not applied:
-        base = base.eq("level_code", point.level_code)
+    if not ex and point.title:
+        try:
+            ex = supabase().table(EXAMPLES_TABLE).select("*").ilike("title", f"%{point.title}%").limit(100).execute().data or []
+        except Exception:
+            pass
 
-    ex = []
-    try:
-        ex = base.limit(100).execute().data or []
-    except Exception:
-        # último recurso: solo por nivel
-        ex = (
-            supabase()
-            .table(EXAMPLES_TABLE)
-            .select("*")
-            .eq("level_code", point.level_code)
-            .limit(100)
-            .execute()
-            .data
-            or []
-        )
+    if not ex:
+        try:
+            ex = supabase().table(EXAMPLES_TABLE).select("*").eq("level_code", point.level_code).limit(100).execute().data or []
+        except Exception:
+            ex = []
+
     examples = [Example(**row) for row in ex]
     return GrammarPointWithExamples(point=point, examples=examples)
 
+# --- Examples (lista) ---
 @app.get("/examples", response_model=PagedResponse)
 def list_examples(
     level_code: Optional[str] = Query(None),
     pattern: Optional[str] = Query(None),
-    q: Optional[str] = Query(None, description="Busca en jp/es/en/title/pattern (si existen)"),
+    q: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    base = supabase().table(EXAMPLES_TABLE).select("*")
+    tbl = supabase().table(EXAMPLES_TABLE)
+    qry = tbl.select("*")
 
-    if level_code:
-        base = base.eq("level_code", level_code)
-
-    # pattern puede no existir en la tabla: probamos y caemos si falla
+    # Filtros directos
     if pattern:
+        qry = qry.ilike("pattern", f"%{pattern}%")
+    if q:
+        like = f"%{q}%"
+        # incluimos romaji por si existiera
+        qry = qry.or_(f"jp.ilike.{like},romaji.ilike.{like},es.ilike.{like},en.ilike.{like},title.ilike.{like},pattern.ilike.{like}")
+
+    # Filtro por level_code (si la tabla examples no tiene esa columna, hacemos subconsulta por grammar_id)
+    ids_for_level: List[str] = []
+    if level_code:
         try:
-            base = base.ilike("pattern", f"%{pattern}%")
+            # si existiera level_code en examples
+            qry = qry.eq("level_code", level_code)
         except Exception:
-            pass
+            # subconsulta por grammar_points
+            gp_ids = (
+                supabase()
+                .table(POINTS_TABLE)
+                .select("id")
+                .eq("level_code", level_code)
+                .limit(2000)
+                .execute()
+                .data
+                or []
+            )
+            ids_for_level = [row["id"] for row in gp_ids if "id" in row]
+            if ids_for_level:
+                qry = qry.in_("grammar_id", ids_for_level)
 
-    like = f"%{q}%" if q else None
-    # probamos varias combinaciones de columnas según lo que exista en la tabla
-    cols_options = [
-        ["jp", "es", "en", "title", "pattern"],
-        ["jp", "es", "title", "pattern"],
-        ["jp", "es"],
-        ["jp"],
-        []
-    ]
-
-    data, total = [], 0
-    for cols in cols_options:
+    # Conteo robusto
+    count_q = supabase().table(EXAMPLES_TABLE).select("*", count="exact")
+    if pattern:
+        count_q = count_q.ilike("pattern", f"%{pattern}%")
+    if q:
+        like = f"%{q}%"
+        count_q = count_q.or_(f"jp.ilike.{like},romaji.ilike.{like},es.ilike.{like},en.ilike.{like},title.ilike.{like},pattern.ilike.{like}")
+    if level_code:
         try:
-            qry = base
-            if q:
-                qry = _apply_or(qry, cols, like)
-            data = qry.order("level_code").range(offset, offset + limit - 1).execute().data or []
-
-            count_q = base.select("*", count="exact")
-            if q:
-                count_q = _apply_or(count_q, cols, like)
-            total = count_q.execute().count or 0
-            break
+            count_q = count_q.eq("level_code", level_code)
         except Exception:
-            # si falla (columna inexistente), probamos con el siguiente set de columnas
-            continue
+            if ids_for_level:
+                count_q = count_q.in_("grammar_id", ids_for_level)
 
-    # último recurso sin OR si todo falló
-    if data == [] and total == 0:
-        try:
-            data = base.order("level_code").range(offset, offset + limit - 1).execute().data or []
-            total = base.select("*", count="exact").execute().count or 0
-        except Exception:
-            data, total = [], 0
+    total = count_q.execute().count or 0
 
+    # Orden seguro (id siempre existe)
+    data = qry.order("id").range(offset, offset + limit - 1).execute().data or []
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
 
+# --- Búsqueda global ---
 @app.get("/search")
 def search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=100)):
     like = f"%{q}%"
 
+    # Grammar points
     gp = (
         supabase()
         .table(POINTS_TABLE)
@@ -237,30 +246,19 @@ def search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=10
         or []
     )
 
-    # búsqueda en ejemplos con fallback si algunas columnas no existen
-    ex = []
-    for cols in (
-        ["jp", "es", "en", "title", "pattern"],
-        ["jp", "es", "title", "pattern"],
-        ["jp", "es"],
-        ["jp"],
-        [],
-    ):
-        try:
-            qry = supabase().table(EXAMPLES_TABLE).select("*")
-            if cols:
-                qry = _apply_or(qry, cols, like)
-            ex = qry.limit(limit).execute().data or []
-            break
-        except Exception:
-            continue
+    # Examples (añadimos romaji)
+    ex = (
+        supabase()
+        .table(EXAMPLES_TABLE)
+        .select("*")
+        .or_(f"jp.ilike.{like},romaji.ilike.{like},es.ilike.{like},en.ilike.{like},title.ilike.{like},pattern.ilike.{like}")
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
 
     return {"query": q, "points": gp, "examples": ex}
-
-# Redirige la raíz a /docs
-@app.get("/")
-def root():
-    return RedirectResponse(url="/docs")
 
 # --- Arranque local / Render ---
 if __name__ == "__main__":
