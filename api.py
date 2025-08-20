@@ -352,50 +352,44 @@ def list_vocab(
 # =========================
 # /jotoba  (lista con filtros + paginación)
 # =========================
-from urllib.parse import unquote
-
 @app.get("/jotoba", response_model=PagedResponse)
 def list_jotoba(
-    level: Optional[str] = Query(None),
-    q: Optional[str] = Query(None),
+    level: Optional[str] = Query(None, description="Nivel N5..N1"),
+    q: Optional[str] = Query(None, description="Búsqueda en term / readings / glosses"),
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """
-    Lista entradas de la tabla jotoba_entries con filtros simples.
-    - Filtro seguro por level (N5..N1)
-    - Búsqueda por 'term' (evita tocar JSON para no romper)
-    - Soporta texto Unicode (escapado/decodificado)
-    - Paginación y conteo exacto
-    """
-    TABLE = os.getenv("JOTOBA_TABLE", "jotoba_entries")
-
-    # Sanitiza 'q' por si viene urlencoded o con espacios
-    q_sanitized = None
-    if q is not None:
-        try:
-            q_sanitized = unquote(str(q)).strip()
-        except Exception:
-            q_sanitized = str(q).strip()
-
-    # Selección básica (no tocamos jsonb para evitar 500)
-    select_cols = "id,uuid,term,level,language,readings,glosses,source,created_at,updated_at"
+    TABLE = "jotoba_entries"
 
     tbl = supabase().table(TABLE)
-    qry = tbl.select(select_cols)
-    cnt = supabase().table(TABLE).select("id", count="exact")
+    qry = tbl.select("*")
 
+    # Filtros
     if level:
         qry = qry.eq("level", level)
-        cnt = cnt.eq("level", level)
 
-    if q_sanitized:
-        like = f"%{q_sanitized}%"
-        # Búsqueda segura: solo por 'term'
-        qry = qry.ilike("term", like)
-        cnt = cnt.ilike("term", like)
+    # ¡Importante! readings/glosses/raw son JSONB y pueden ser arrays.
+    # Para evitar 500, casteamos a texto y usamos ilike.
+    cond = None
+    if q:
+        like = f"%{q}%"
+        cond = ",".join([
+            f"term.ilike.{like}",
+            f"readings::text.ilike.{like}",
+            f"glosses::text.ilike.{like}",
+            f"raw::text.ilike.{like}",
+        ])
+        qry = qry.or_(cond)
 
-    total = cnt.execute().count or 0
+    # Conteo exacto con los mismos filtros
+    count_q = supabase().table(TABLE).select("id", count="exact")
+    if level:
+        count_q = count_q.eq("level", level)
+    if cond:
+        count_q = count_q.or_(cond)
+
+    total = count_q.execute().count or 0
+
     data = (
         qry.order("level")
            .range(offset, offset + limit - 1)
@@ -403,4 +397,5 @@ def list_jotoba(
            .data
         or []
     )
+
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
