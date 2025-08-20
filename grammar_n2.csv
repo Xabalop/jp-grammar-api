@@ -1,0 +1,6 @@
+level_code,title,pattern,meaning_es,meaning_en,notes,tags,jp,romaji,es,en,hint,source
+N2,Contraste,〜一方で,mientras que; por otro lado,on the other hand,Contrasta dos hechos,"contraste;comparación","日本は安全な一方で、物価が高い","nihon wa anzen na ippou de, bukka ga takai","Japón es seguro, pero caro.","Japan is safe, but expensive.",contraste,Jitopia
+N2,Imposibilidad,〜わけがない,no puede ser,there’s no way,Expresa fuerte negación,"negación;énfasis","彼が嘘をつくわけがない","kare ga uso o tsuku wake ga nai","No hay forma de que él mienta.","There’s no way he lies.",énfasis,Jitopia
+N2,Generalización,〜に違いない,sin duda; seguramente,must be,Expresa alta certeza,"certeza;suposición","彼は来るに違いない","kare wa kuru ni chigainai","Seguro que viene.","He must be coming.",certeza,Jitopia
+N2,Condicional hipotético,〜としたら,si fuera el caso,if it were the case,Expresa condición hipotética,"hipótesis;condicional","行くとしたら、電車で行きます","iku to shitara, densha de ikimasu","Si fuera, iría en tren.","If I were to go, I would go by train.",condicional,Jitopia
+N2,Extremo,〜ほど,no tanto como; al punto de,so… that,Grado extremo de comparación,"grado;comparación","死ぬほど疲れた","shinu hodo tsukareta","Estoy cansado al punto de morir.","I’m tired to death.",énfasis,Jitopia

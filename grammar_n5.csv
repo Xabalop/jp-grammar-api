@@ -1,0 +1,6 @@
+level_code,title,pattern,meaning_es,meaning_en,notes,tags,jp,romaji,es,en,hint,source
+N5,Presente afirmativo,〜です,"es/ser/to be","is/are/am","Cópula formal","formal;básico","これは本です","kore wa hon desu","Esto es un libro.","This is a book.","cloze","Jitopia"
+N5,Presente negativo,〜じゃないです,"no es","not","Cópula negativa","negación;formal","彼は学生じゃないです","kare wa gakusei janai desu","Él no es estudiante.","He is not a student.","negación","Jitopia"
+N5,Partícula de tema,〜は,"(tema)","topic marker","topic marker","partícula;tema","私は日本人です","watashi wa nihonjin desu","Yo soy japonés.","I am Japanese.","partícula","Jitopia"
+N5,Partícula de objeto,〜を,"(objeto)","object marker","object marker","partícula;objeto","水を飲みます","mizu o nomimasu","Bebo agua.","I drink water.","partícula","Jitopia"
+N5,Partícula de lugar,〜に,"indica destino","to","Indica dirección/destino","partícula;lugar","学校に行きます","gakkou ni ikimasu","Voy a la escuela.","I go to school.","dirección","Jitopia"

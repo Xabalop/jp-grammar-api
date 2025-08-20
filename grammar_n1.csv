@@ -1,0 +1,6 @@
+level_code,title,pattern,meaning_es,meaning_en,notes,tags,jp,romaji,es,en,hint,source
+N1,Probabilidad alta,〜に違いない,sin duda; seguro,must be,Alta seguridad,"certeza;probabilidad","彼が犯人に違いない","kare ga hannin ni chigainai","Sin duda, él es el culpable.","He must be the culprit.",certeza,Jitopia
+N1,Contraste fuerte,〜ものの,aunque,although,Expresa contraste fuerte,"contraste;concesión","行くとは言ったものの、まだ迷っている","iku to wa itta mono no, mada mayotte iru","Aunque dije que iría, sigo dudando.","Although I said I’d go, I’m still unsure.",contraste,Jitopia
+N1,Inmediatez,〜や否や,en cuanto,as soon as,Expresa acción inmediata,"inmediatez;tiempo","駅に着くや否や、電話した","eki ni tsuku ya ina ya, denwa shita","Tan pronto como llegué a la estación, llamé.","As soon as I arrived at the station, I called.",tiempo,Jitopia
+N1,Obligación fuerte,〜ざるを得ない,no tener más remedio que,can’t help but,Expresa obligación inevitable,"obligación;necesidad","仕事を続けざるを得ない","shigoto o tsuzuke zaru o enai","No tengo más remedio que seguir trabajando.","I can’t help but continue working.",necesidad,Jitopia
+N1,Inutilidad,〜たところで,aunque; incluso si,even if,Expresa inutilidad de una acción,"inutilidad;hipótesis","急いだところで間に合わない","isoida tokoro de maniawanai","Aunque me dé prisa, no llegaré a tiempo.","Even if I hurry, I won’t make it.",hipótesis,Jitopia

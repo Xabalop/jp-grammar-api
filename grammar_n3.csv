@@ -1,0 +1,14 @@
+level_code,title,pattern,meaning_es,meaning_en,notes,tags,jp,romaji,es,en,hint,source
+N3,Expresar propósito,〜ように,"para que; de modo que",so that,Indica objetivo o finalidad,"propósito;objetivo","話をする時、緊張しないように深呼吸します",,"Cuando hablo, respiro hondo para no ponerme nervioso.",,cloze,Jitopia
+N3,Condicional real,〜たら,si; cuando,if/when,Resultado tras una condición cumplida,"condicional;tiempo","雨が降ったら、家にいます",,"Si llueve, me quedo en casa.",,cloze,Jitopia
+N3,Hábito/propensión,〜がちだ,"tender a; propenso a","tend to",Frecuencia o inclinación (a veces negativa),"hábito;frecuencia","彼は仕事を休みがちだ",,"Él tiende a faltar al trabajo.",,cloze,Jitopia
+N3,Empatía/suposición,〜みたいだ,parece que; como si,seems like,Juicio subjetivo basado en apariencia,"suposición;parecido","あの雲は犬みたいだ",,"Esa nube parece un perro.",,visual,Jitopia
+N3,Prohibición suave,〜ないでください,por favor no…,please don’t,Petición cortés en negativo,"petición;cortesía","ここでタバコを吸わないでください",,"Por favor, no fume aquí.",,petición,Jitopia
+N3,Acumulación de acciones,〜ていく,ir (a partir de ahora),go on (from now),Acción que continúa desde ahora hacia el futuro,"progresión;tiempo","日本語の勉強を続けていく",,"Seguiré estudiando japonés.",,progreso,Jitopia
+N3,Resultado de cambio,〜てくる,venir (hasta ahora),come to (up to now),Cambio que llega al presente,"cambio;tiempo","寒くなってきた",,"Se ha ido poniendo frío.",,tiempo,Jitopia
+N3,Obligación,〜なければならない,"debo; tengo que","must; have to",Necesidad/obligación objetiva,"obligación;regla","宿題を終わらせなければならない",,"Tengo que terminar los deberes.",,obligación,Jitopia
+N3,Intención/plan,〜つもりだ,tener la intención de,intend to,Plan personal firme,"plan;intención","来年、留学するつもりだ",,"Tengo intención de estudiar en el extranjero el próximo año.",,plan,Jitopia
+N3,Experiencia,〜たことがある,haber hecho alguna vez,have (ever) done,Experiencia pasada al menos una vez,"experiencia;pasado","寿司を作ったことがありますか",,"¿Has hecho sushi alguna vez?",,pregunta,Jitopia
+N3,Capacidad,〜られる (可能形),poder; ser capaz de,can (ability),Forma potencial de verbos,"capacidad;potencial","漢字が読めるようになった",,"He llegado a ser capaz de leer kanji.",,progreso,Jitopia
+N3,Preparación previa,〜ておく,dejar hecho; preparar,do in advance,Acción preparatoria para el futuro,"preparación;plan","旅行の前にチケットを買っておく",,"Compraré los billetes antes del viaje.",,plan,Jitopia
+
