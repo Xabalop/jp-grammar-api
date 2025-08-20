@@ -352,52 +352,50 @@ def list_vocab(
 # =========================
 # /jotoba  (lista con filtros + paginación)
 # =========================
+from urllib.parse import unquote
+
 @app.get("/jotoba", response_model=PagedResponse)
 def list_jotoba(
     level: Optional[str] = Query(None),
-    language: Optional[str] = Query(None),
-    q: Optional[str] = Query(None),     # busca por 'term' y, si se puede, dentro de 'readings'
+    q: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    table_name = "jotoba_entries"
-    tbl = supabase().table(table_name)
-    qry = tbl.select("*")
+    """
+    Lista entradas de la tabla jotoba_entries con filtros simples.
+    - Filtro seguro por level (N5..N1)
+    - Búsqueda por 'term' (evita tocar JSON para no romper)
+    - Soporta texto Unicode (escapado/decodificado)
+    - Paginación y conteo exacto
+    """
+    TABLE = os.getenv("JOTOBA_TABLE", "jotoba_entries")
+
+    # Sanitiza 'q' por si viene urlencoded o con espacios
+    q_sanitized = None
+    if q is not None:
+        try:
+            q_sanitized = unquote(str(q)).strip()
+        except Exception:
+            q_sanitized = str(q).strip()
+
+    # Selección básica (no tocamos jsonb para evitar 500)
+    select_cols = "id,uuid,term,level,language,readings,glosses,source,created_at,updated_at"
+
+    tbl = supabase().table(TABLE)
+    qry = tbl.select(select_cols)
+    cnt = supabase().table(TABLE).select("id", count="exact")
 
     if level:
         qry = qry.eq("level", level)
-    if language:
-        qry = qry.eq("language", language)
+        cnt = cnt.eq("level", level)
 
-    # Búsqueda básica por 'term' y, si la API lo permite, por readings::text
-    if q:
-        like = f"%{q}%"
-        # intentamos incluir readings::text; si falla, nos quedamos con 'term'
-        try:
-            qry = qry.or_(f"term.ilike.{like},readings::text.ilike.{like}")
-            use_readings = True
-        except Exception:
-            qry = qry.ilike("term", like)
-            use_readings = False
+    if q_sanitized:
+        like = f"%{q_sanitized}%"
+        # Búsqueda segura: solo por 'term'
+        qry = qry.ilike("term", like)
+        cnt = cnt.ilike("term", like)
 
-    # Conteo con mismos filtros
-    count_q = supabase().table(table_name).select("*", count="exact")
-    if level:
-        count_q = count_q.eq("level", level)
-    if language:
-        count_q = count_q.eq("language", language)
-    if q:
-        like = f"%{q}%"
-        try:
-            if use_readings:
-                count_q = count_q.or_(f"term.ilike.{like},readings::text.ilike.{like}")
-            else:
-                count_q = count_q.ilike("term", like)
-        except Exception:
-            count_q = count_q.ilike("term", like)
-
-    total = count_q.execute().count or 0
-
+    total = cnt.execute().count or 0
     data = (
         qry.order("level")
            .range(offset, offset + limit - 1)
