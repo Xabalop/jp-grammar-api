@@ -6,6 +6,7 @@ from typing import List, Optional, Any, Dict
 from dotenv import load_dotenv
 import os, random, re
 from supabase import create_client, Client
+from postgrest.exceptions import APIError
 
 # --- Carga .env ---
 load_dotenv()
@@ -13,7 +14,8 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE")
 POINTS_TABLE = os.getenv("POINTS_TABLE", "grammar_points")
-EXAMPLES_TABLE = os.getenv("EXAMPLES_TABLE", "examples")  # tu tabla real
+# por defecto 'examples' porque en tus logs hace referencia a esa tabla
+EXAMPLES_TABLE = os.getenv("EXAMPLES_TABLE", "examples")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE en el entorno (.env).")
@@ -26,7 +28,7 @@ def supabase() -> Client:
         _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _supabase
 
-# --- Modelos de dominio ---
+# --- Modelos ---
 class GrammarPoint(BaseModel):
     id: str
     level_code: str
@@ -42,10 +44,9 @@ class GrammarPoint(BaseModel):
 class Example(BaseModel):
     id: Optional[str] = None
     grammar_id: Optional[str] = None
-    level_code: Optional[str] = None
     title: Optional[str] = None
     pattern: Optional[str] = None
-    jp: Optional[str] = None
+    jp: str
     es: Optional[str] = None
     en: Optional[str] = None
     hint: Optional[str] = None
@@ -62,13 +63,13 @@ class PagedResponse(BaseModel):
 
 # --- Modelos de quiz ---
 class QuizQuestion(BaseModel):
-    id: str                       # id estable (point_id o example_id)
-    type: str                     # cloze, pattern, meaning, translation
-    prompt: str                   # enunciado a mostrar
-    jp: Optional[str] = None      # oración JP (cuando aplica)
-    choices: List[str]            # opciones
-    answer_idx: int               # índice correcto en choices
-    meta: Dict[str, Any] = Field(default_factory=dict)  # extras útiles
+    id: str
+    type: str                 # cloze, pattern, meaning, translation
+    prompt: str
+    jp: Optional[str] = None
+    choices: List[str]
+    answer_idx: int
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
 # --- App ---
 app = FastAPI(title="JP Grammar API", version="1.2.0")
@@ -82,15 +83,18 @@ app.add_middleware(
 )
 
 # ----------------- utilidades -----------------
+def _safe_list(x):
+    return x if isinstance(x, list) else []
+
 def _sample(seq: List[Any], k: int) -> List[Any]:
     if not seq or k <= 0:
         return []
     if k >= len(seq):
-        return random.sample(seq, len(seq))  # todo sin repetir
+        return random.sample(seq, len(seq))
     return random.sample(seq, k)
 
-def _hide_pattern(text: Optional[str], pattern: Optional[str]) -> str:
-    """Oculta el patrón en la oración. Si no aparece, aún así devuelve el texto con un hueco razonable."""
+def _hide_pattern(text: str, pattern: Optional[str]) -> str:
+    """Oculta el patrón en la oración."""
     if not text:
         return ""
     if pattern:
@@ -101,11 +105,22 @@ def _hide_pattern(text: Optional[str], pattern: Optional[str]) -> str:
                 return masked
         except re.error:
             pass
-    # fallback: si no ubicamos patrón, ponemos hueco tras el primer token japonés largo
+    # fallback: oculta el primer token japonés "largo"
     return re.sub(r"[ぁ-んァ-ン一-龯]{2,}", "____", text, count=1)
 
-def _chunk(lst: List[str], size: int = 100) -> List[List[str]]:
-    return [lst[i:i+size] for i in range(0, len(lst), size)]
+def _get_point_ids_by_level(level_code: str) -> List[str]:
+    """Devuelve IDs de grammar_points de un nivel."""
+    rows = (
+        supabase()
+        .table(POINTS_TABLE)
+        .select("id")
+        .eq("level_code", level_code)
+        .limit(2000)
+        .execute()
+        .data
+        or []
+    )
+    return [r["id"] for r in rows if r.get("id")]
 
 # ----------------- endpoints básicos -----------------
 @app.get("/health")
@@ -133,6 +148,7 @@ def list_grammar(
         like = f"%{q}%"
         qry = qry.or_(f"title.ilike.{like},pattern.ilike.{like},meaning_es.ilike.{like},meaning_en.ilike.{like}")
 
+    # contar
     count_q = supabase().table(POINTS_TABLE).select("id", count="exact")
     if level_code:
         count_q = count_q.eq("level_code", level_code)
@@ -151,16 +167,23 @@ def get_grammar_point(point_id: str):
         raise HTTPException(status_code=404, detail="Punto gramatical no encontrado")
     point = GrammarPoint(**r.data)
 
-    ex_q = supabase().table(EXAMPLES_TABLE).select("*")
-    filt = False
-    if point.pattern:
-        ex_q = ex_q.ilike("pattern", f"%{point.pattern}%"); filt = True
-    if point.title:
-        ex_q = ex_q.ilike("title", f"%{point.title}%"); filt = True
-    if not filt:
-        ex_q = ex_q.eq("level_code", point.level_code)
-
+    # 1) buscar por grammar_id (lo más fiable)
+    ex_q = supabase().table(EXAMPLES_TABLE).select("*").eq("grammar_id", point.id)
     ex = ex_q.limit(100).execute().data or []
+
+    # 2) fallback: por pattern/title si no hay vinculados
+    if not ex:
+        ex_q = supabase().table(EXAMPLES_TABLE).select("*")
+        filt = False
+        if point.pattern:
+            ex_q = ex_q.ilike("pattern", f"%{point.pattern}%")
+            filt = True
+        if point.title:
+            ex_q = ex_q.ilike("title", f"%{point.title}%")
+            filt = True
+        if filt:
+            ex = ex_q.limit(100).execute().data or []
+
     examples = [Example(**row) for row in ex]
     return GrammarPointWithExamples(point=point, examples=examples)
 
@@ -172,28 +195,35 @@ def list_examples(
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    tbl = supabase().table(EXAMPLES_TABLE)
-    qry = tbl.select("*")
+    base = supabase().table(EXAMPLES_TABLE)
+    qry = base.select("*")
 
+    # Si nos pasan level_code, filtramos por grammar_id de ese nivel (la tabla examples no tiene level_code)
+    gp_ids: Optional[List[str]] = None
     if level_code:
-        qry = qry.eq("level_code", level_code)
+        gp_ids = _get_point_ids_by_level(level_code)
+        if not gp_ids:
+            return PagedResponse(items=[], total=0, limit=limit, offset=offset)
+        qry = qry.in_("grammar_id", gp_ids)
+
     if pattern:
         qry = qry.ilike("pattern", f"%{pattern}%")
     if q:
         like = f"%{q}%"
         qry = qry.or_(f"jp.ilike.{like},es.ilike.{like},en.ilike.{like},title.ilike.{like},pattern.ilike.{like}")
 
+    # contar con mismos filtros
     count_q = supabase().table(EXAMPLES_TABLE).select("id", count="exact")
-    if level_code:
-        count_q = count_q.eq("level_code", level_code)
+    if gp_ids:
+        count_q = count_q.in_("grammar_id", gp_ids)
     if pattern:
         count_q = count_q.ilike("pattern", f"%{pattern}%")
     if q:
         like = f"%{q}%"
         count_q = count_q.or_(f"jp.ilike.{like},es.ilike.{like},en.ilike.{like},title.ilike.{like},pattern.ilike.{like}")
-
     total = count_q.execute().count or 0
-    data = qry.order("level_code").range(offset, offset + limit - 1).execute().data or []
+
+    data = qry.order("id").range(offset, offset + limit - 1).execute().data or []
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
 
 @app.get("/search")
@@ -219,7 +249,7 @@ def search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=10
     )
     return {"query": q, "points": gp, "examples": ex}
 
-# ----------------- Carga de datos para QUIZ -----------------
+# ----------------- QUIZ -----------------
 def _load_points(level_code: Optional[str]) -> List[GrammarPoint]:
     q = supabase().table(POINTS_TABLE).select("*")
     if level_code:
@@ -227,49 +257,32 @@ def _load_points(level_code: Optional[str]) -> List[GrammarPoint]:
     rows = q.limit(500).execute().data or []
     return [GrammarPoint(**r) for r in rows]
 
-def _load_examples(level_code: Optional[str], grammar_ids: Optional[List[str]] = None, limit: int = 1500) -> List[Example]:
-    """
-    Obtiene ejemplos. Si grammar_ids es largo, fragmenta la consulta .in_ en chunks para evitar URLs enormes
-    y captura errores devolviendo al menos ejemplos por nivel.
-    """
-    results: List[Dict[str, Any]] = []
+def _load_examples(level_code: Optional[str], grammar_ids: Optional[List[str]] = None, limit: int = 1000) -> List[Example]:
+    """No usamos level_code en la tabla examples (no existe). Filtramos por grammar_id si está disponible."""
+    q = supabase().table(EXAMPLES_TABLE).select("*")
+    if grammar_ids:
+        q = q.in_("grammar_id", grammar_ids)
     try:
-        if grammar_ids:
-            ids = [gid for gid in grammar_ids if gid]
-            if ids:
-                # chunk para evitar límites del operador in_ / URL
-                for chunk_ids in _chunk(ids, 100):
-                    q = supabase().table(EXAMPLES_TABLE).select("*")
-                    if level_code:
-                        q = q.eq("level_code", level_code)
-                    q = q.in_("grammar_id", chunk_ids)
-                    part = q.limit(limit).execute().data or []
-                    results.extend(part)
-        # si no hay grammar_ids o no salió nada, intenta por nivel
-        if not results:
-            q = supabase().table(EXAMPLES_TABLE).select("*")
-            if level_code:
-                q = q.eq("level_code", level_code)
-            results = q.limit(limit).execute().data or []
-    except Exception:
-        # fallback duro por nivel si algo explotó
-        q = supabase().table(EXAMPLES_TABLE).select("*")
-        if level_code:
-            q = q.eq("level_code", level_code)
-        results = q.limit(limit).execute().data or []
-    # normaliza
-    return [Example(**r) for r in (results or [])]
+        rows = q.limit(limit).execute().data or []
+    except APIError:
+        # fallback extremo (no debería entrar)
+        rows = q.limit(limit).execute().data or []
+    return [Example(**r) for r in rows]
 
-# ----------------- Constructores de preguntas -----------------
 def _q_pattern(p: GrammarPoint, pool: List[GrammarPoint]) -> QuizQuestion:
     correct = (p.pattern or "").strip() or "—"
     candidates = [x.pattern for x in pool if x.id != p.id and (x.pattern or "").strip()]
     distractors = _sample(candidates, 3)
     choices = distractors + [correct]
     random.shuffle(choices)
-    answer_idx = choices.index(correct)
-    prompt = f"¿Qué patrón corresponde a: «{(p.meaning_es or p.title or '').strip()}»?"
-    return QuizQuestion(id=p.id, type="pattern", prompt=prompt, choices=choices, answer_idx=answer_idx, meta={"level": p.level_code})
+    return QuizQuestion(
+        id=p.id,
+        type="pattern",
+        prompt=f"¿Qué patrón corresponde a: «{(p.meaning_es or p.title or '').strip()}»?",
+        choices=choices,
+        answer_idx=choices.index(correct),
+        meta={"level": p.level_code},
+    )
 
 def _q_meaning(p: GrammarPoint, pool: List[GrammarPoint], lang: str = "es") -> QuizQuestion:
     correct = (p.meaning_es if lang == "es" else p.meaning_en) or p.title or "—"
@@ -277,10 +290,15 @@ def _q_meaning(p: GrammarPoint, pool: List[GrammarPoint], lang: str = "es") -> Q
     distractors = _sample([c for c in candidates if c], 3)
     choices = distractors + [correct]
     random.shuffle(choices)
-    answer_idx = choices.index(correct)
     show = (p.pattern or p.title or "").strip()
-    prompt = f"¿Cuál es el significado de «{show}»?"
-    return QuizQuestion(id=p.id, type="meaning", prompt=prompt, choices=choices, answer_idx=answer_idx, meta={"level": p.level_code})
+    return QuizQuestion(
+        id=p.id,
+        type="meaning",
+        prompt=f"¿Cuál es el significado de «{show}»?",
+        choices=choices,
+        answer_idx=choices.index(correct),
+        meta={"level": p.level_code},
+    )
 
 def _q_translation(ex: Example, pool: List[Example], lang: str = "es") -> QuizQuestion:
     correct = (ex.es if lang == "es" else ex.en) or ""
@@ -289,46 +307,41 @@ def _q_translation(ex: Example, pool: List[Example], lang: str = "es") -> QuizQu
     distractors = _sample(candidates, 3)
     choices = distractors + [correct]
     random.shuffle(choices)
-    answer_idx = choices.index(correct)
-    prompt = "Elige la traducción correcta:"
     return QuizQuestion(
         id=ex.id or "",
         type="translation",
-        prompt=prompt,
-        jp=ex.jp or "",
+        prompt="Elige la traducción correcta:",
+        jp=ex.jp,
         choices=choices,
-        answer_idx=answer_idx,
-        meta={"grammar_id": ex.grammar_id, "level": ex.level_code},
+        answer_idx=choices.index(correct),
+        meta={"grammar_id": ex.grammar_id},
     )
 
 def _q_cloze(ex: Example, gp_lookup: Dict[str, GrammarPoint], pool_points: List[GrammarPoint]) -> QuizQuestion:
     pattern = None
     if ex.grammar_id and ex.grammar_id in gp_lookup:
         pattern = gp_lookup[ex.grammar_id].pattern
-    masked = _hide_pattern(ex.jp or "", pattern)
+    masked = _hide_pattern(ex.jp, pattern)
     correct = (pattern or ex.pattern or "—").strip()
-    same_level = [p for p in pool_points if p.level_code == (ex.level_code or "")]
-    candidates = [p.pattern for p in same_level if p.pattern and p.pattern != correct]
-    if len(candidates) < 3:
-        candidates.extend([p.pattern for p in pool_points if p.pattern and p.pattern != correct])
-    # únicos
-    candidates = list(dict.fromkeys([c for c in candidates if c]))
-    distractors = _sample(candidates, 3)
+
+    same_level: List[GrammarPoint] = []
+    if ex.grammar_id and ex.grammar_id in gp_lookup:
+        lvl = gp_lookup[ex.grammar_id].level_code
+        same_level = [p for p in pool_points if p.level_code == lvl]
+    candidates = [p.pattern for p in (same_level or pool_points) if p.pattern and p.pattern != correct]
+    distractors = _sample(list(dict.fromkeys(candidates)), 3)
     choices = distractors + [correct]
     random.shuffle(choices)
-    answer_idx = choices.index(correct)
-    prompt = "Completa la oración:"
     return QuizQuestion(
         id=ex.id or "",
         type="cloze",
-        prompt=prompt,
+        prompt="Completa la oración:",
         jp=masked,
         choices=choices,
-        answer_idx=answer_idx,
-        meta={"grammar_id": ex.grammar_id, "level": ex.level_code},
+        answer_idx=choices.index(correct),
+        meta={"grammar_id": ex.grammar_id},
     )
 
-# ----------------- Endpoint QUIZ -----------------
 @app.get("/quiz", response_model=List[QuizQuestion])
 def quiz(
     level_code: Optional[str] = Query(None, description="N5..N1"),
@@ -344,11 +357,13 @@ def quiz(
     examples: List[Example] = []
     if type in ("mix", "cloze", "translation"):
         examples = _load_examples(level_code, [p.id for p in points], limit=1500)
+        if not examples:
+            examples = _load_examples(level_code, None, limit=1500)
 
     questions: List[QuizQuestion] = []
 
     def add_cloze():
-        ex_pool = [e for e in examples if (e.jp and (e.grammar_id or e.pattern))]
+        ex_pool = [e for e in examples if e.jp]
         if not ex_pool:
             return False
         ex = random.choice(ex_pool)
@@ -383,30 +398,23 @@ def quiz(
     if type == "mix":
         order = ["cloze", "pattern", "meaning", "translation"]
         while len(questions) < n:
-            made = False
             for t in order:
                 if len(questions) >= n:
                     break
-                if builders[t]():
-                    made = True
-            # si nada se pudo crear (p.ej. sin ejemplos), rellena con pattern/meaning
-            if not made:
-                if not add_pattern() and not add_meaning():
-                    break
+                ok = builders[t]()
+                if not ok:
+                    for alt in order:
+                        if builders[alt]():
+                            break
     else:
         build = builders[type]
-        guard = 0
-        while len(questions) < n and guard < 200:
+        while len(questions) < n:
             if not build():
-                # fallback: intenta otros tipos si el pedido no es viable
-                tried = False
-                for alt_name in ["pattern", "meaning", "cloze", "translation"]:
-                    if alt_name != type and builders[alt_name]():
-                        tried = True
+                for alt_name, alt in builders.items():
+                    if alt_name != type and alt():
                         break
-                if not tried:
-                    break
-            guard += 1
+            if len(questions) > 100:
+                break
 
     random.shuffle(questions)
     return questions[:n]
