@@ -1,26 +1,24 @@
 # api.py
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
 
-# --- Carga .env ---
+# -------------------- Carga .env --------------------
 load_dotenv()
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE")
-
 POINTS_TABLE = os.getenv("POINTS_TABLE", "grammar_points")
-# 👇 tu tabla real en Supabase
 EXAMPLES_TABLE = os.getenv("EXAMPLES_TABLE", "examples")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE en el entorno (.env).")
 
-# --- Cliente Supabase singleton ---
+# -------------------- Cliente Supabase (singleton) --------------------
 _supabase: Optional[Client] = None
 def supabase() -> Client:
     global _supabase
@@ -28,7 +26,7 @@ def supabase() -> Client:
         _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _supabase
 
-# --- Modelos ---
+# -------------------- Modelos --------------------
 class GrammarPoint(BaseModel):
     id: str
     level_code: str
@@ -60,9 +58,10 @@ class PagedResponse(BaseModel):
     limit: int
     offset: int
 
-# --- App ---
+# -------------------- App --------------------
 app = FastAPI(title="JP Grammar API", version="1.0.0")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*", "http://localhost:3000", "http://127.0.0.1:3000"],
@@ -70,6 +69,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# opcional: redirigir raíz a /docs
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 def health():
@@ -80,8 +84,7 @@ def get_levels():
     r = supabase().table("levels").select("code").order("code").execute()
     return r.data or []
 
-# -------- GRAMMAR --------
-
+# -------------------- GRAMMAR --------------------
 @app.get("/grammar", response_model=PagedResponse)
 def list_grammar(
     level_code: Optional[str] = Query(None),
@@ -89,18 +92,18 @@ def list_grammar(
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    tbl = supabase().table(POINTS_TABLE)
+    s = supabase()
+    tbl = s.table(POINTS_TABLE)
     qry = tbl.select("*")
 
     if level_code:
         qry = qry.eq("level_code", level_code)
-
     if q:
         like = f"%{q}%"
         qry = qry.or_(f"title.ilike.{like},pattern.ilike.{like},meaning_es.ilike.{like},meaning_en.ilike.{like}")
 
-    # conteo exacto con los mismos filtros
-    count_q = supabase().table(POINTS_TABLE).select("id", count="exact")
+    # Conteo exacto con mismos filtros
+    count_q = s.table(POINTS_TABLE).select("id", count="exact")
     if level_code:
         count_q = count_q.eq("level_code", level_code)
     if q:
@@ -113,32 +116,33 @@ def list_grammar(
            .order("title")
            .range(offset, offset + limit - 1)
            .execute()
-           .data or []
+           .data
+        or []
     )
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
 
 @app.get("/grammar/{point_id}", response_model=GrammarPointWithExamples)
 def get_grammar_point(point_id: str):
-    r = supabase().table(POINTS_TABLE).select("*").eq("id", point_id).single().execute()
+    s = supabase()
+    r = s.table(POINTS_TABLE).select("*").eq("id", point_id).single().execute()
     if not r.data:
         raise HTTPException(status_code=404, detail="Punto gramatical no encontrado")
     point = GrammarPoint(**r.data)
 
-    # ejemplos por relación directa
+    # ejemplos vinculados por grammar_id
     ex = (
-        supabase()
-        .table(EXAMPLES_TABLE)
-        .select("*")
-        .eq("grammar_id", point_id)
-        .limit(200)
-        .execute()
-        .data or []
+        s.table(EXAMPLES_TABLE)
+         .select("*")
+         .eq("grammar_id", point_id)
+         .limit(200)
+         .execute()
+         .data
+        or []
     )
     examples = [Example(**row) for row in ex]
     return GrammarPointWithExamples(point=point, examples=examples)
 
-# -------- EXAMPLES --------
-
+# -------------------- EXAMPLES --------------------
 @app.get("/examples", response_model=PagedResponse)
 def list_examples(
     level_code: Optional[str] = Query(None, description="Filtra por nivel del grammar point"),
@@ -147,22 +151,20 @@ def list_examples(
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    tbl = supabase().table(EXAMPLES_TABLE)
+    s = supabase()
+    tbl = s.table(EXAMPLES_TABLE)
     qry = tbl.select("*")
 
-    # Si llega grammar_id, filtramos directo
     if grammar_id:
         qry = qry.eq("grammar_id", grammar_id)
 
-    # Si llega level_code, obtenemos los ids de grammar_points y filtramos IN
     gp_ids: List[str] = []
     if level_code:
         gp_resp = (
-            supabase()
-            .table(POINTS_TABLE)
-            .select("id")
-            .eq("level_code", level_code)
-            .execute()
+            s.table(POINTS_TABLE)
+             .select("id")
+             .eq("level_code", level_code)
+             .execute()
         )
         gp_ids = [row["id"] for row in (gp_resp.data or [])]
         if not gp_ids:
@@ -173,8 +175,8 @@ def list_examples(
         like = f"%{q}%"
         qry = qry.or_(f"jp.ilike.{like},es.ilike.{like},en.ilike.{like},romaji.ilike.{like},hint.ilike.{like}")
 
-    # Conteo exacto con los mismos filtros
-    count_q = supabase().table(EXAMPLES_TABLE).select("id", count="exact")
+    # Conteo exacto
+    count_q = s.table(EXAMPLES_TABLE).select("id", count="exact")
     if grammar_id:
         count_q = count_q.eq("grammar_id", grammar_id)
     if gp_ids:
@@ -187,47 +189,39 @@ def list_examples(
     data = (
         qry.range(offset, offset + limit - 1)
            .execute()
-           .data or []
+           .data
+        or []
     )
     return PagedResponse(items=data, total=total, limit=limit, offset=offset)
 
-# -------- SEARCH --------
-
+# -------------------- SEARCH --------------------
 @app.get("/search")
 def search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=100)):
     like = f"%{q}%"
+    s = supabase()
 
     gp = (
-        supabase()
-        .table(POINTS_TABLE)
-        .select("*")
-        .or_(f"title.ilike.{like},pattern.ilike.{like},meaning_es.ilike.{like},meaning_en.ilike.{like}")
-        .limit(limit)
-        .execute()
-        .data
+        s.table(POINTS_TABLE)
+         .select("*")
+         .or_(f"title.ilike.{like},pattern.ilike.{like},meaning_es.ilike.{like},meaning_en.ilike.{like}")
+         .limit(limit)
+         .execute()
+         .data
         or []
     )
 
     ex = (
-        supabase()
-        .table(EXAMPLES_TABLE)
-        .select("*")
-        .or_(f"jp.ilike.{like},es.ilike.{like},en.ilike.{like},romaji.ilike.{like},hint.ilike.{like}")
-        .limit(limit)
-        .execute()
-        .data
+        s.table(EXAMPLES_TABLE)
+         .select("*")
+         .or_(f"jp.ilike.{like},es.ilike.{like},en.ilike.{like},romaji.ilike.{like},hint.ilike.{like}")
+         .limit(limit)
+         .execute()
+         .data
         or []
     )
     return {"query": q, "points": gp, "examples": ex}
 
-# --- Arranque local / Render ---
-@app.get("/__debug/env", include_in_schema=False)
-def debug_env():
-    return {
-        "POINTS_TABLE": POINTS_TABLE,
-        "EXAMPLES_TABLE": EXAMPLES_TABLE
-    }
-
+# -------------------- Arranque local / Render --------------------
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8001))
