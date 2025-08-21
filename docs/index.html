@@ -1,6 +1,9 @@
 cd "C:\Users\xavib\OneDrive\Escritorio\APP vocabulario\Nueva carpeta\jp-grammar-infra"
 
-@"
+# Asegura la carpeta docs
+if (!(Test-Path .\docs)) { New-Item -ItemType Directory -Path .\docs | Out-Null }
+
+@'
 <!doctype html>
 <html lang="es">
 <head>
@@ -129,4 +132,4 @@ cd "C:\Users\xavib\OneDrive\Escritorio\APP vocabulario\Nueva carpeta\jp-grammar-
   </script>
 </body>
 </html>
-"@ | Set-Content -Path .\docs\index.html -Encoding utf8
+'@ | Set-Content -Path .\docs\index.html -Encoding utf8
