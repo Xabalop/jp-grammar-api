@@ -1,0 +1,91 @@
+@'
+
+
+if (level) params.set("level_code", level);
+if (q) params.set("q", q);
+params.set("limit", limit);
+params.set("offset", offset);
+
+
+try {
+const data = await fetchJSON(`${API}/grammar?` + params.toString());
+total = data.total || 0;
+renderGrammar(data.items || [], offset, limit, total);
+setStatus("");
+} catch (e) {
+console.error(e);
+setStatus("Error al cargar grammar.");
+}
+}
+
+
+function renderGrammar(items, offset, limit, total) {
+els.results.innerHTML = "";
+if (!items.length) {
+els.results.innerHTML = `<p class="muted">Sin resultados.</p>`;
+} else {
+for (const it of items) {
+const card = document.createElement("div");
+card.className = "card";
+card.innerHTML = `
+<div><strong>${esc(it.title)}</strong></div>
+<div class="muted">Nivel: ${esc(it.level_code)} · Fuente: ${esc(it.source) ?? "—"}</div>
+<div>Patrón: <span class="mono">${esc(it.pattern) || "—"}</span></div>
+<div>ES: ${esc(it.meaning_es) || "—"}</div>
+<div>EN: ${esc(it.meaning_en) || "—"}</div>
+<div>Etiquetas: ${Array.isArray(it.tags) && it.tags.length ? it.tags.join(", ") : "—"}</div>
+<details><summary>Ver ejemplos</summary>
+<div class="muted">Cargando ejemplos…</div>
+</details>
+`;
+const details = card.querySelector("details");
+details.addEventListener("toggle", async () => {
+if (!details.open) return;
+const container = details.querySelector("div");
+container.textContent = "Cargando ejemplos…";
+try {
+const full = await fetchJSON(`${API}/grammar/${it.id}`);
+const exs = full.examples || [];
+if (!exs.length) {
+container.innerHTML = `<div class="muted">Sin ejemplos para este punto.</div>`;
+return;
+}
+container.innerHTML = exs.map(ex => `
+<div style="margin:8px 0; padding:8px; border:1px dashed #ddd; border-radius:8px;">
+<div class="mono" style="font-size:1.05em;">${esc(ex.jp)}</div>
+<div class="muted">ES: ${esc(ex.es) || "—"} · EN: ${esc(ex.en) || "—"}</div>
+</div>
+`).join("");
+} catch (e) {
+console.error(e);
+container.textContent = "Error al cargar ejemplos.";
+}
+}, { once: true });
+els.results.appendChild(card);
+}
+}
+
+
+const page = Math.floor(offset / limit) + 1;
+const pages = Math.max(1, Math.ceil(total / limit));
+els.pageInfo.textContent = `Página ${page} de ${pages} · ${total} resultados`;
+els.prev.disabled = offset <= 0;
+els.next.disabled = offset + limit >= total;
+}
+
+
+// eventos
+els.btnLoad.addEventListener("click", () => { offset = 0; loadGrammar(); });
+els.prev.addEventListener("click", () => { const limit = parseInt(els.limit.value,10)||10; offset = Math.max(0, offset - limit); loadGrammar(); });
+els.next.addEventListener("click", () => { const limit = parseInt(els.limit.value,10)||10; offset = offset + limit; loadGrammar(); });
+
+
+// arranque
+(async () => {
+await loadLevels();
+await loadGrammar();
+})();
+</script>
+</body>
+</html>
+'@ | Set-Content -Path .\docs\index.html -Encoding utf8
