@@ -1,135 +1,317 @@
-cd "C:\Users\xavib\OneDrive\Escritorio\APP vocabulario\Nueva carpeta\jp-grammar-infra"
-
-# Asegura la carpeta docs
-if (!(Test-Path .\docs)) { New-Item -ItemType Directory -Path .\docs | Out-Null }
-
-@'
 <!doctype html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>JP Grammar Browser</title>
-  <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;max-width:1000px;margin:32px auto;padding:0 16px;line-height:1.45}
-    header{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
-    select,input,button{padding:8px 10px;border:1px solid #ccc;border-radius:8px}
-    button{cursor:pointer}
-    .page{opacity:.8;margin-left:6px}
-    .card{border:1px solid #e5e5e5;border-radius:12px;padding:10px;margin:10px 0;background:#fafafa}
-    .card>summary{font-weight:600;cursor:pointer}
-    .card .ex{border-top:1px dashed #ddd;padding:8px 0}
-    .card .jp{font-size:1.05rem}
-  </style>
-</head>
-<body>
-  <h1>JP Grammar Browser</h1>
-  <header>
-    <label for="level">Nivel:</label>
-    <select id="level"></select>
-    <input id="q" placeholder="buscar (título/patrón/significado)..." />
-    <button id="load">Buscar</button>
-    <span class="page" id="pageinfo"></span>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JP Grammar — Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+      html { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Noto Sans JP', 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif; }
+      .jp { font-family: 'Noto Sans JP', Inter, system-ui, sans-serif; }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div class="text-xl font-semibold">JP Grammar <span class="text-slate-400 text-base">Demo</span></div>
+        <div class="ml-auto flex items-center gap-2 text-sm">
+          <label for="baseUrl" class="text-slate-500">API</label>
+          <input id="baseUrl" class="w-[420px] max-w-[60vw] px-3 py-1.5 rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <button id="btnHealth" class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">Probar</button>
+          <span id="healthDot" class="inline-flex h-2.5 w-2.5 rounded-full bg-slate-300" title="estado"></span>
+        </div>
+      </div>
+    </header>
 
-  <div id="results">Cargando…</div>
+    <main class="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-8">
+      <!-- Levels -->
+      <section>
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Niveles</h2>
+          <div class="text-sm text-slate-500">Haz clic para cargar puntos gramaticales</div>
+        </div>
+        <div id="levels" class="mt-3 flex flex-wrap gap-2"></div>
+      </section>
 
-  <script>
-    const API = "https://jp-grammar-api.onrender.com";
-    const els = {
-      level: document.getElementById("level"),
-      q: document.getElementById("q"),
-      load: document.getElementById("load"),
-      results: document.getElementById("results"),
-      pageinfo: document.getElementById("pageinfo"),
-    };
+      <!-- Grammar list -->
+      <section>
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Gramática</h2>
+          <div class="flex items-center gap-2">
+            <input id="searchBox" placeholder="Buscar… (título, patrón, significado)" class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-72" />
+            <button id="btnSearch" class="px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-900">Buscar</button>
+          </div>
+        </div>
+        <div id="grammar" class="mt-4 grid md:grid-cols-2 gap-3"></div>
+      </section>
 
-    let limit = 20, offset = 0, total = 0;
-    let currentLevel = null, currentQ = "";
+      <!-- Quiz -->
+      <section>
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Quiz</h2>
+          <div class="flex items-center gap-2 text-sm">
+            <label class="text-slate-600">Nivel</label>
+            <select id="quizLevel" class="px-2 py-1.5 rounded-md border border-slate-300 bg-white">
+              <option value="">Cualquiera</option>
+              <option>N5</option>
+              <option>N4</option>
+              <option>N3</option>
+              <option>N2</option>
+              <option>N1</option>
+            </select>
+            <label class="text-slate-600">Tipo</label>
+            <select id="quizType" class="px-2 py-1.5 rounded-md border border-slate-300 bg-white">
+              <option value="mix">Mixto</option>
+              <option value="cloze">Cloze</option>
+              <option value="pattern">Pattern</option>
+              <option value="meaning">Meaning</option>
+              <option value="translation">Translation</option>
+            </select>
+            <label class="text-slate-600">#</label>
+            <input id="quizN" type="number" min="1" max="20" value="6" class="w-16 px-2 py-1.5 rounded-md border border-slate-300 bg-white" />
+            <button id="btnStartQuiz" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Empezar</button>
+          </div>
+        </div>
+        <div id="quiz" class="mt-4"></div>
+      </section>
+    </main>
 
-    async function fetchJSON(url){
-      const r = await fetch(url);
-      if(!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    }
-    function esc(v){ return (v ?? "").toString(); }
+    <template id="tpl-grammar-card">
+      <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div class="flex items-start gap-3">
+          <div class="text-xs px-2 py-1 rounded-md bg-slate-100 text-slate-600 font-medium">Nivel <span data-k="level"></span></div>
+          <div class="ml-auto text-slate-400 text-xs" data-k="source"></div>
+        </div>
+        <h3 class="mt-2 text-base font-semibold" data-k="title"></h3>
+        <div class="mt-1">
+          <span class="text-slate-500 text-sm">Patrón:</span>
+          <span class="jp text-lg" data-k="pattern"></span>
+        </div>
+        <div class="mt-1 text-sm text-slate-700"><span class="text-slate-500">Significado:</span> <span data-k="meaning"></span></div>
+        <div class="mt-2 flex flex-wrap gap-2 text-xs" data-k="tags"></div>
+        <div class="mt-3 flex items-center gap-2">
+          <button class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700" data-k="btn-examples">Ver ejemplos</button>
+          <button class="px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-900" data-k="btn-quiz">Quiz rápido</button>
+        </div>
+        <div class="mt-3 space-y-2 hidden" data-k="examples"></div>
+      </article>
+    </template>
 
-    async function loadLevels(){
-      const levels = await fetchJSON(`${API}/levels`);
-      els.level.innerHTML = '<option value="">Todos</option>' +
-        levels.map(l => `<option value="${l.code}">${l.code}</option>`).join("");
-    }
+    <script type="module">
+      const $ = (sel, el=document) => el.querySelector(sel);
+      const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
 
-    async function loadGrammar(){
-      const params = new URLSearchParams();
-      if(currentLevel) params.set("level_code", currentLevel);
-      if(currentQ) params.set("q", currentQ);
-      params.set("limit", limit);
-      params.set("offset", offset);
+      const DEFAULT_BASE = 'https://jp-grammar-api.onrender.com';
 
-      els.results.textContent = "Cargando…";
-      try{
-        const data = await fetchJSON(`${API}/grammar?` + params.toString());
-        total = data.total || 0;
-        render(data.items || []);
-        const page = Math.floor(offset/limit) + 1;
-        const pages = Math.max(1, Math.ceil(total/limit));
-        els.pageinfo.textContent = `Página ${page} de ${pages} — ${total} resultados`;
-      }catch(e){
-        els.results.textContent = "Error al cargar: " + e.message;
+      const baseInput = $('#baseUrl');
+      const healthDot = $('#healthDot');
+      const levelsEl = $('#levels');
+      const grammarEl = $('#grammar');
+      const quizEl = $('#quiz');
+
+      function getBase() {
+        return localStorage.getItem('apiBase') || DEFAULT_BASE;
       }
-    }
+      function setBase(v) {
+        localStorage.setItem('apiBase', v);
+      }
 
-    function render(items){
-      if(!items.length){ els.results.textContent = "Sin resultados."; return; }
-      els.results.innerHTML = "";
-      for(const it of items){
-        const details = document.createElement("details");
-        details.className = "card";
+      async function j(url) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json();
+      }
 
-        const summary = document.createElement("summary");
-        summary.textContent = `${it.level_code} · ${esc(it.title)} — ${esc(it.pattern) || ""}`;
-        details.appendChild(summary);
+      async function healthCheck() {
+        const url = `${getBase()}/health`;
+        try {
+          await j(url);
+          healthDot.className = 'inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500';
+        } catch (e) {
+          healthDot.className = 'inline-flex h-2.5 w-2.5 rounded-full bg-rose-500';
+        }
+      }
 
-        const content = document.createElement("div");
-        content.innerHTML = `
-          <div><b>ES:</b> ${esc(it.meaning_es) || "—"} — <b>EN:</b> ${esc(it.meaning_en) || "—"}</div>
-          <div><b>Notas:</b> ${esc(it.notes) || "—"}</div>
-          <div><b>Etiquetas:</b> ${(Array.isArray(it.tags) ? it.tags : []).join(", ")}</div>
-          <div class="examples">Pulsa para cargar ejemplos…</div>
+      function pill(txt) {
+        const span = document.createElement('span');
+        span.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200';
+        span.textContent = txt;
+        return span;
+      }
+
+      async function loadLevels() {
+        levelsEl.innerHTML = '';
+        const data = await j(`${getBase()}/levels`);
+        const list = Array.isArray(data) ? data : data.value; // PowerShell vs JSON normal
+        list.forEach(({code}) => {
+          const btn = document.createElement('button');
+          btn.className = 'px-3 py-1.5 rounded-lg bg-white border border-slate-300 shadow-sm hover:bg-slate-50';
+          btn.textContent = code;
+          btn.addEventListener('click', () => loadGrammar(code));
+          levelsEl.appendChild(btn);
+        });
+      }
+
+      async function loadGrammar(level) {
+        grammarEl.innerHTML = '';
+        const data = await j(`${getBase()}/grammar?${new URLSearchParams({level_code: level, limit: 20})}`);
+        const items = data.items || [];
+        for (const row of items) {
+          grammarEl.appendChild(renderGrammarCard(row));
+        }
+      }
+
+      function renderGrammarCard(row) {
+        const tpl = $('#tpl-grammar-card');
+        const node = tpl.content.cloneNode(true);
+        node.querySelector('[data-k="level"]').textContent = row.level_code;
+        node.querySelector('[data-k="source"]').textContent = row.source || '';
+        node.querySelector('[data-k="title"]').textContent = row.title;
+        node.querySelector('[data-k="pattern"]').textContent = row.pattern || '—';
+        node.querySelector('[data-k="meaning"]').textContent = row.meaning_es || row.meaning_en || '';
+        const tags = node.querySelector('[data-k="tags"]');
+        (row.tags || []).forEach(t => tags.appendChild(pill(t)));
+        const exWrap = node.querySelector('[data-k="examples"]');
+
+        node.querySelector('[data-k="btn-examples"]').addEventListener('click', async () => {
+          exWrap.classList.toggle('hidden');
+          if (!exWrap.dataset.loaded) {
+            const det = await j(`${getBase()}/grammar/${row.id}`);
+            const examples = det.examples || [];
+            exWrap.innerHTML = '';
+            examples.slice(0, 6).forEach(ex => {
+              const div = document.createElement('div');
+              div.className = 'p-3 rounded-xl bg-slate-50 border border-slate-200';
+              div.innerHTML = `
+                <div class="jp">${ex.jp}</div>
+                <div class="text-sm text-slate-600">${ex.es || ex.en || ''}</div>
+              `;
+              exWrap.appendChild(div);
+            });
+            exWrap.dataset.loaded = '1';
+          }
+        });
+
+        node.querySelector('[data-k="btn-quiz"]').addEventListener('click', () => startQuiz(row.level_code, 6, 'mix'));
+        return node;
+      }
+
+      async function doSearch() {
+        const q = $('#searchBox').value.trim();
+        if (!q) return;
+        grammarEl.innerHTML = '';
+        const data = await j(`${getBase()}/search?${new URLSearchParams({q, limit: 20})}`);
+        const points = data.points || [];
+        points.forEach(p => grammarEl.appendChild(renderGrammarCard(p)));
+      }
+
+      async function startQuiz(level, n, type) {
+        quizEl.innerHTML = '';
+        const params = new URLSearchParams({ n, type });
+        if (level) params.set('level_code', level);
+        const qs = await j(`${getBase()}/quiz?${params}`);
+        const list = Array.isArray(qs) ? qs : (qs.value || []);
+        const state = { idx: 0, correct: 0, total: list.length, list };
+        renderQuestion(state);
+      }
+
+      function renderQuestion(state) {
+        const q = state.list[state.idx];
+        if (!q) return renderQuizDone(state);
+        const wrap = document.createElement('div');
+        wrap.className = 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm';
+        wrap.innerHTML = `
+          <div class="text-sm text-slate-500">Pregunta ${state.idx + 1} / ${state.total} · <span class="uppercase">${q.type}</span></div>
+          <div class="mt-1 font-medium">${q.prompt}</div>
+          ${q.jp ? `<div class="jp mt-2 text-lg">${q.jp}</div>` : ''}
+          <div class="mt-3 grid sm:grid-cols-2 gap-2" id="choices"></div>
+          <div class="mt-3 hidden" id="explain"></div>
         `;
-        details.appendChild(content);
-
-        details.addEventListener("toggle", async () => {
-          if(!details.open) return;
-          const box = content.querySelector(".examples");
-          box.textContent = "Cargando ejemplos…";
-          try{
-            const full = await fetchJSON(`${API}/grammar/${it.id}`);
-            const exs = full?.examples ?? [];
-            if(!exs.length){ box.textContent = "Sin ejemplos para este punto."; return; }
-            box.innerHTML = exs.map(ex => `
-              <div class="ex">
-                <div class="jp">${esc(ex.jp)}</div>
-                <div class="tr">ES: ${esc(ex.es) || "—"} · EN: ${esc(ex.en) || "—"}</div>
-              </div>
-            `).join("");
-          }catch(e){ box.textContent = "Error al cargar ejemplos."; }
-        }, { once: true });
-
-        els.results.appendChild(details);
+        quizEl.replaceChildren(wrap);
+        const choices = $('#choices', wrap);
+        q.choices.forEach((c, i) => {
+          const btn = document.createElement('button');
+          btn.className = 'px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-left';
+          btn.innerHTML = `<span class="jp">${c}</span>`;
+          btn.addEventListener('click', async () => {
+            const ok = i === q.answer_idx;
+            if (ok) state.correct++;
+            $$('#choices button', wrap).forEach((b, j) => {
+              b.disabled = true;
+              b.classList.remove('hover:bg-slate-50');
+              if (j === q.answer_idx) b.classList.add('border-emerald-400', 'bg-emerald-50');
+              if (j === i && !ok) b.classList.add('border-rose-400', 'bg-rose-50');
+            });
+            // explicación opcional vía grammar_id
+            const exDiv = $('#explain', wrap);
+            if (q.meta && q.meta.grammar_id) {
+              try {
+                const det = await j(`${getBase()}/grammar/${q.meta.grammar_id}`);
+                const p = det.point || {};
+                exDiv.classList.remove('hidden');
+                exDiv.className = 'mt-3 p-3 rounded-xl bg-slate-50 border border-slate-200';
+                exDiv.innerHTML = `
+                  <div class="text-sm text-slate-600"><b>Explicación:</b> ${p.meaning_es || p.meaning_en || ''}</div>
+                  ${p.pattern ? `<div class="jp text-sm mt-1">Patrón: ${p.pattern}</div>` : ''}
+                  ${p.notes ? `<div class="text-xs text-slate-500 mt-1">${p.notes}</div>` : ''}
+                `;
+              } catch {}
+            }
+            const next = document.createElement('button');
+            next.className = 'mt-3 px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700';
+            next.textContent = state.idx + 1 < state.total ? 'Siguiente' : 'Ver resultado';
+            next.addEventListener('click', () => { state.idx++; renderQuestion(state); });
+            wrap.appendChild(next);
+          });
+          choices.appendChild(btn);
+        });
       }
-    }
 
-    els.load.addEventListener("click", () => {
-      currentLevel = els.level.value || null;
-      currentQ = els.q.value.trim();
-      offset = 0;
-      loadGrammar();
-    });
+      function renderQuizDone(state) {
+        const wrap = document.createElement('div');
+        wrap.className = 'rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm';
+        const pct = Math.round((state.correct / state.total) * 100);
+        wrap.innerHTML = `
+          <div class="text-2xl font-semibold">Resultado</div>
+          <div class="mt-2 text-4xl font-bold">${state.correct} / ${state.total} <span class="text-slate-400 text-2xl">(${pct}%)</span></div>
+          <div class="mt-4 flex justify-center gap-2">
+            <button id="btnRepeat" class="px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-900">Repetir</button>
+            <button id="btnNewN5" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Nuevo N5</button>
+          </div>
+        `;
+        quizEl.replaceChildren(wrap);
+        $('#btnRepeat', wrap).addEventListener('click', () => {
+          // reintentar último tipo con mismos params básicos
+          const level = $('#quizLevel').value;
+          const type = $('#quizType').value;
+          const n = parseInt($('#quizN').value || '6', 10);
+          startQuiz(level, n, type);
+        });
+        $('#btnNewN5', wrap).addEventListener('click', () => startQuiz('N5', 6, 'mix'));
+      }
 
-    (async () => { await loadLevels(); await loadGrammar(); })();
-  </script>
-</body>
+      // wiring UI
+      baseInput.value = getBase();
+      baseInput.addEventListener('change', (e) => { setBase(e.target.value.trim()); healthCheck(); });
+      $('#btnHealth').addEventListener('click', healthCheck);
+      $('#btnSearch').addEventListener('click', doSearch);
+      $('#btnStartQuiz').addEventListener('click', () => {
+        const level = $('#quizLevel').value;
+        const type = $('#quizType').value;
+        const n = parseInt($('#quizN').value || '6', 10);
+        startQuiz(level, n, type);
+      });
+
+      // boot
+      (async function init(){
+        await healthCheck();
+        await loadLevels();
+        // opcional: precargar gramática N5
+        // await loadGrammar('N5');
+      })();
+    </script>
+  </body>
 </html>
-'@ | Set-Content -Path .\docs\index.html -Encoding utf8

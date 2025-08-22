@@ -17,3 +17,4 @@ venv/
 # Archivos del sistema
 .DS_Store
 Thumbs.db
+resp.json
